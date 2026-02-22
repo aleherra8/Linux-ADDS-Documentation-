@@ -265,3 +265,200 @@ We check the full user structure to confirm all users and OUs are correctly plac
 sudo samba-tool user list --full-dn
 ```
 
+# SPRINT 3 - Disks and Shared Folders
+
+## Step 1 — Add a New Disk
+
+First we add a new disk to the machine. We identify it using `lsblk`. In this case it is the 2G disk (`/dev/sdb`).
+
+```bash
+lsblk
+```
+
+## Step 2 — Create the Disk Partition
+
+We create a partition on the new disk using `fdisk`:
+
+```bash
+sudo fdisk /dev/sdb
+```
+
+Inside fdisk, we follow these steps:
+- Press `n` to create a new partition
+- Select `p` for primary
+- Accept the default partition number (1)
+- Accept the default first and last sectors (full disk)
+- Press `w` to write the changes and exit
+
+## Step 3 — Format with ext4
+
+We format the new partition with the ext4 filesystem:
+
+```bash
+sudo mkfs.ext4 /dev/sdb1
+```
+
+## Step 4 — Create a Mount Point and Mount the Partition
+
+We create a new mount point and mount the partition there:
+
+```bash
+sudo mkdir -p /mnt/discn
+sudo mount /dev/sdb1 /mnt/discn
+```
+
+## Step 5 — Verify the Mount
+
+We verify the partition is correctly mounted:
+
+```bash
+df -h | grep sdb
+```
+
+## Step 6 — Create the Shared Folders
+
+We create the directory structure for the shared folders:
+
+```bash
+sudo mkdir -p /mnt/discn/compar/finance
+sudo mkdir -p /mnt/discn/compar/hr
+sudo mkdir -p /mnt/discn/compar/public
+```
+
+## Step 7 — Set Permissions on the Folders
+
+We set recursive permissions on the shared folder:
+
+```bash
+sudo chmod -R 770 /mnt/discn/compar/
+```
+
+## Step 8 — Check the Permissions
+
+We verify the permissions have been applied:
+
+```bash
+sudo ls -la /mnt/discn/compar
+```
+
+## Step 9 — Configure Shared Folders in smb.conf
+
+We configure the shared folders by editing `/etc/samba/smb.conf`:
+
+```ini
+idmap_ldb:use rfc2307 = yes
+
+[sysvol]
+    path = /var/lib/samba/sysvol
+    read only = No
+
+[netlogon]
+    path = /var/lib/samba/sysvol/lab10.lan/scripts
+    read only = No
+
+[FinanceDocs]
+    comment = Finance Department
+    path = /mnt/discn/compar/finance
+    valid users = @Finance, @"Domain Admins"
+    read only = no
+    browseable = yes
+    create mask = 0660
+    directory mask = 0770
+
+[HRDocs]
+    comment = HR Department
+    path = /mnt/discn/compar/hr
+    valid users = @HR_Staff, @"Domain Admins"
+    read only = no
+    browseable = yes
+    create mask = 0660
+    directory mask = 0770
+
+[Public]
+    comment = Public
+    path = /mnt/discn/compar/public
+    read only = yes
+    browseable = yes
+```
+
+## Step 10 — Check the Syntax
+
+We validate the Samba configuration syntax:
+
+```bash
+testparm
+```
+
+## Step 11 — Reload Samba and List Shares
+
+We reload the Samba service and list the available shares to verify:
+
+```bash
+sudo systemctl reload samba-ad-dc
+smbclient -L localhost -U administrator
+```
+
+## Step 12 — Configure ACLs
+
+### For FinanceDocs
+
+```bash
+sudo setfacl -m "g:LAB05\\finance:rwx" /mnt/data/shares/finance
+sudo setfacl -d -m "g:LAB05\\finance:rwx" /mnt/data/shares/finance
+sudo chmod +t /mnt/data/shares/finance
+```
+
+### For HRDocs
+
+```bash
+sudo setfacl -m "g:LAB05\\hr_staff:rwx" /mnt/data/shares/hr
+sudo setfacl -d -m "g:LAB05\\hr_staff:rwx" /mnt/data/shares/hr
+```
+
+### For Public
+
+```bash
+sudo setfacl -m "g:LAB05\\domain users:rx" /mnt/data/shares/public
+sudo setfacl -d -m "g:LAB05\\domain users:rx" /mnt/data/shares/public
+```
+
+## Step 13 — Verify ACLs
+
+```bash
+getfacl /mnt/data/shares/finance
+getfacl /mnt/data/shares/hr
+getfacl /mnt/data/shares/public
+```
+
+## Step 14 — Create the Backup Script
+
+We create an automated backup script at `/usr/local/bin/backup_shares.sh`:
+
+```bash
+#!/bin/bash
+# Automated backup for Samba shared folders
+BACKUP_DIR="/backup/samba"
+DATE=$(date +%Y%m%d_%H%M%S)
+
+mkdir -p "$BACKUP_DIR"
+tar -czf "$BACKUP_DIR/samba_backup_$DATE.tar.gz" -C /mnt/discn compar
+
+# Keep only last 7 backups
+cd "$BACKUP_DIR" && ls -t *.tar.gz 2>/dev/null | tail -n +8 | xargs -r rm
+
+echo "Backup completed: $DATE" >> "$BACKUP_DIR/backup.log"
+```
+
+## Step 15 — Schedule the Backup with Crontab
+
+We schedule the backup script to run daily at 19:00 using crontab:
+
+```bash
+sudo crontab -l
+```
+
+Crontab entry:
+
+```
+0 19 * * * /usr/local/bin/backup_shares.sh >> /var/log/samba_backup.log 2>&1
+```
