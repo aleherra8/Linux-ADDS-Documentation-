@@ -462,3 +462,263 @@ Crontab entry:
 ```
 0 19 * * * /usr/local/bin/backup_shares.sh >> /var/log/samba_backup.log 2>&1
 ```
+# SPRINT 4 - Trust Relationships Between Domains
+
+## Step 1 — Change the IP on the Secondary Server
+
+We start by changing the IP on the secondary server by editing `/etc/netplan/00-installer-config.yaml`:
+
+```yaml
+network:
+  ethernets:
+    enp0s3:
+      addresses:
+        - 192.168.1.68/24
+      nameservers:
+        addresses:
+          - 127.0.0.1
+          - 1.1.1.1
+        search: [lab210.lan]
+      routes:
+        - to: default
+          via: 192.168.1.1
+    enp0s8:
+      addresses:
+        - 10.2.10.253/24
+      nameservers:
+        addresses:
+          - 127.0.0.1
+          - 192.168.1.69
+        search: [lab210.lan]
+  version: 2
+```
+
+## Step 2 — Update the Machine
+
+We update and upgrade the secondary server:
+
+```bash
+sudo apt update && sudo apt upgrade -y
+```
+
+## Step 3 — Edit /etc/hosts on the Secondary Server
+
+We edit `/etc/hosts` and add the following entries:
+
+```
+127.0.0.1   localhost
+127.0.1.1   lse10
+10.2.10.253 lse10.lab210.lan
+10.2.10.254 ls10.lab10.lan
+```
+
+## Step 4 — Edit /etc/hosts on the Primary Server
+
+We apply the same changes on the primary server:
+
+```
+127.0.0.1   localhost
+127.0.1.1   ls10.lab10.lan ls10
+10.2.10.254 ls10.lab10.lan ls10
+10.2.10.253 lse10.lab210.lan lse10
+```
+
+## Step 5 — Install Samba and Required Packages
+
+We install Samba and its dependencies on the secondary server:
+
+```bash
+sudo apt install samba krb5-user bind9-dnsutils smbclient winbind -y
+```
+
+During Kerberos configuration, set:
+- Default Kerberos realm: `LAB210.LAN`
+- Kerberos servers for the realm: `LSE10.lab210.lan`
+- Administrative server: `lse10.lab210.lan`
+
+## Step 6 — Disable the Classic Samba Services
+
+We disable the classic Samba services that conflict with the AD DC role:
+
+```bash
+sudo systemctl disable --now smbd nmbd winbind
+```
+
+## Step 7 — Mask the Conflicting Services
+
+We mask the services to prevent them from starting:
+
+```bash
+sudo systemctl mask smbd nmbd winbind
+```
+
+## Step 8 — Unmask and Enable samba-ad-dc
+
+We make sure `samba-ad-dc` is unmasked and enable it:
+
+```bash
+sudo systemctl unmask samba-ad-dc
+sudo systemctl enable samba-ad-dc
+```
+
+## Step 9 — Rename the Existing Samba Configuration
+
+We move the existing config file out of the way:
+
+```bash
+sudo mv /etc/samba/smb.conf /etc/samba/smb.conf.orig
+```
+
+## Step 10 — Provision the New Domain
+
+We create the new domain interactively:
+
+```bash
+sudo samba-tool domain provision
+```
+
+Use the following values when prompted:
+- **Realm:** `LAB210.LAN`
+- **Domain:** `LAB210`
+- **Server Role:** `dc`
+- **DNS backend:** `SAMBA_INTERNAL`
+- **Administrator password:** (set a secure password)
+
+## Step 11 — Configure smb.conf on the Secondary Server
+
+We edit `/etc/samba/smb.conf` and set the DNS forwarder to the primary server's IP:
+
+```ini
+# Global parameters
+[global]
+    dns forwarder = 10.2.10.254
+    netbios name = LSE10
+    realm = LAB210.LAN
+    server role = active directory domain controller
+    workgroup = LAB210
+
+[sysvol]
+    path = /var/lib/samba/sysvol
+    read only = No
+
+[netlogon]
+    path = /var/lib/samba/sysvol/lab210.lan/scripts
+    read only = No
+```
+
+## Step 12 — Configure smb.conf on the Primary Server
+
+On the primary server, we update `/etc/samba/smb.conf` to point its DNS forwarder to the secondary server's IP:
+
+```ini
+# Global parameters
+[global]
+    dns forwarder = 10.2.10.253
+    netbios name = LS10
+    realm = LAB10.LAN
+    server role = active directory domain controller
+    workgroup = LAB10
+    idmap_ldb:use rfc2307 = yes
+
+[sysvol]
+    path = /var/lib/samba/sysvol
+    read only = No
+
+[netlogon]
+    path = /var/lib/samba/sysvol/lab10.lan/scripts
+    read only = No
+```
+
+## Step 13 — Remove the Existing resolv.conf Symlink and Recreate It
+
+On the secondary server, we unlink the current resolv.conf and create a new static one:
+
+```bash
+sudo unlink /etc/resolv.conf
+sudo echo -e "nameserver 127.0.0.1\nsearch lab210.lan" | sudo tee /etc/resolv.conf
+```
+
+The resulting `/etc/resolv.conf` should contain:
+
+```
+nameserver 127.0.0.1
+nameserver 1.1.1.1
+search lab210.lan
+```
+
+## Step 14 — Disable systemd-resolved
+
+We disable `systemd-resolved` to ensure proper name resolution:
+
+```bash
+sudo systemctl disable --now systemd-resolved
+```
+
+## Step 15 — Copy the Kerberos Configuration and Start Samba
+
+We copy the generated Kerberos configuration file and start the Samba AD DC service:
+
+```bash
+sudo cp /var/lib/samba/private/krb5.conf /etc/krb5.conf
+sudo systemctl start samba-ad-dc
+```
+
+## Step 16 — Verify the Service Status
+
+We check that `samba-ad-dc` is running correctly:
+
+```bash
+sudo systemctl status samba-ad-dc
+```
+
+## Step 17 — Obtain a Kerberos Ticket and Verify
+
+We obtain a Kerberos ticket and list it to confirm authentication works:
+
+```bash
+kinit Administrator
+klist
+```
+
+## Step 18 — Verify the Domain
+
+We verify the domain level and domain information:
+
+```bash
+sudo samba-tool domain level show
+sudo samba-tool domain info 127.0.0.1
+```
+
+## Step 19 — Verify DNS Resolution Between Both Domains
+
+From the secondary server, we run nslookup against both domains:
+
+```bash
+nslookup lse10.lab210.lan
+nslookup ls10.lab10.lan
+```
+
+From the primary server, we do the same:
+
+```bash
+nslookup ls10.lab10.lan
+nslookup lse10.lab210.lan
+```
+
+## Step 20 — Create the Forest Trust
+
+From the primary server, we create a bidirectional forest trust with the secondary domain:
+
+```bash
+sudo samba-tool domain trust create lab210.lan \
+  --type=forest \
+  --direction=both \
+  -U administrator@lab210.lan
+```
+
+The output should confirm:
+- Remote TDO created
+- Local TDO created
+- Outgoing trust validated successfully
+- Incoming trust validated successfully
+- **Success**
