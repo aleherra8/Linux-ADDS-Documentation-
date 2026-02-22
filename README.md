@@ -722,3 +722,90 @@ The output should confirm:
 - Outgoing trust validated successfully
 - Incoming trust validated successfully
 - **Success**
+
+# SPRINT 5 - Joining a Windows Client to the Domain
+
+## Step 1 — Configure the IP on the Windows Client
+
+We configure a static IP on the Windows machine using the following settings in the IPv4 properties:
+
+- **IP Address:** 10.2.10.252
+- **Subnet Mask:** 255.255.255.0
+- **Default Gateway:** 10.2.10.254
+- **Preferred DNS Server:** 10.2.10.254
+
+## Step 2 — Verify Connectivity
+
+We verify there is connectivity to the main server and to the domain:
+
+```cmd
+ping 10.2.10.254
+ping lab10.lan
+```
+
+## Step 3 — Join the Domain via System Properties
+
+To join the domain, we press `Win + R` and type:
+
+```
+sysdm.cpl
+```
+
+In the **System Properties** window, we click **Change...** and under **Member of**, we select **Domain** and enter:
+
+```
+lab10.lan
+```
+
+## Step 4 — Authenticate with a Domain Account
+
+When prompted for credentials, we enter the domain administrator account:
+
+- **Username:** Administrator
+- **Password:** (domain administrator password)
+
+The machine will confirm it has successfully joined the domain `lab10.lan`.
+
+## Step 5 — Prevent Administrator Password Expiry (if needed)
+
+If there are issues with the domain user password expiring, we disable expiry for the administrator account from the server:
+
+```bash
+sudo samba-tool user setexpiry administrator --noexpiry
+```
+
+## Step 6 — Log In with a Domain User
+
+We log into the Windows machine using the domain user Alice:
+
+```
+LAB10\Alice
+```
+
+We can verify the currently logged-in user from the command prompt:
+
+```cmd
+whoami
+```
+
+Expected output:
+
+```
+lab10\alice
+```
+
+## Step 7 — Verify Access to Shared Folders
+
+We verify that the shared folders configured on the server are accessible from the Windows client by navigating to:
+
+```
+\\ls10.lab10.lan
+```
+
+The following shares should be visible:
+
+- **FinanceDocs**
+- **HRDocs**
+- **Public**
+- **netlogon**
+- **sysvol**
