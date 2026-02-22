@@ -64,3 +64,204 @@ We verify the domain:
 sudo samba-tool domain level show
 ```
 
+# SPRINT 2 - Join Client, Users and Groups
+
+## Step 1 — Change the Client IP
+
+First we change the IP of the client machine by editing the netplan configuration file `/etc/netplan/01-network-manager-all.yaml`:
+
+```yaml
+network:
+  version: 2
+  renderer: networkd
+  ethernets:
+    enp0s3:
+      dhcp4: no
+      addresses:
+        - 10.2.10.253/24
+      routes:
+        - to: default
+          via: 172.30.20.1
+      nameservers:
+        addresses:
+          - 10.2.10.254
+          - 10.239.3.7
+        search: [lab10.lan]
+    enp0s8:
+      dhcp4: true
+```
+
+## Step 2 — Verify Connectivity from Client to Server
+
+We verify connectivity by pinging the server from the client:
+
+```bash
+ping 10.2.10.254
+```
+
+## Step 3 — DNS Lookup
+
+We run an nslookup against the domain:
+
+```bash
+nslookup lab10.lan
+```
+
+We set the server IP in `/etc/resolv.conf`:
+
+```
+nameserver 127.0.0.53
+options edns0 trust-ad
+search lab10.lan
+```
+
+## Step 4 — Ping the FQDN
+
+We ping the server using its Fully Qualified Domain Name (FQDN):
+
+```bash
+ping ls10.lab10.lan
+```
+
+## Step 5 — Update the Machine
+
+We update and upgrade the client machine:
+
+```bash
+sudo apt update && sudo apt upgrade
+```
+
+## Step 6 — Install Required Packages
+
+After updating, we install the following packages:
+
+```bash
+sudo apt install realmd sssd sssd-tools libnss-sss libpam-sss adcli -y
+```
+
+## Step 7 — Discover the Domain
+
+We discover the domain:
+
+```bash
+realm discover lab10.lan
+```
+
+## Step 8 — Join the Domain
+
+We join the domain using the administrator account:
+
+```bash
+sudo realm join lab10.lan -U administrator --verbose
+```
+
+## Step 9 — Enable Home Directory Creation
+
+We enable automatic home directory creation on first login:
+
+```bash
+sudo pam-auth-update --enable mkhomedir
+```
+
+## Step 10 — Create Users in Samba (from the server)
+
+We create users on the Samba domain controller:
+
+```bash
+sudo samba-tool user create <username> <password>
+```
+
+Example:
+
+```bash
+sudo samba-tool user create Alice admin_21
+sudo samba-tool user create Bob admin_21
+sudo samba-tool user create Charlie admin_21
+```
+
+## Step 11 — Create Groups
+
+We add groups to the domain:
+
+```bash
+sudo samba-tool group add <group_name>
+```
+
+Example:
+
+```bash
+sudo samba-tool group add IT_Admins
+sudo samba-tool group add Students
+sudo samba-tool group add HR_Staff
+```
+
+## Step 12 — Verify Groups
+
+We verify the groups have been created:
+
+```bash
+sudo samba-tool group list | grep -E "(IT_Admins|HR_Staff|Students|Finance)"
+```
+
+## Step 13 — Add Users to Their Respective Groups
+
+We add each user to their corresponding group:
+
+```bash
+sudo samba-tool group addmembers <group> <user>
+```
+
+Example:
+
+```bash
+sudo samba-tool group addmembers IT_Admins Alice
+sudo samba-tool group addmembers Students Bob
+sudo samba-tool group addmembers Students Charlie
+```
+
+## Step 14 — Verify Users from the Client
+
+We verify the users were created successfully by logging into the client machine as one of the domain users:
+
+```bash
+# Login as alice@lab10.lan from the client
+```
+
+## Step 15 — Create Organizational Units (OUs)
+
+We create Organizational Units on the domain controller:
+
+```bash
+sudo samba-tool ou create "OU=<name>,DC=<domain>,DC=<tld>"
+```
+
+Example:
+
+```bash
+sudo samba-tool ou create "OU=IT_Department,DC=lab10,DC=lan"
+sudo samba-tool ou create "OU=HR_Department,DC=lab10,DC=lan"
+sudo samba-tool ou create "OU=Students,DC=lab10,DC=lan"
+```
+
+## Step 16 — Create Users Directly Inside an OU
+
+We can also create users and assign them to an OU at creation time:
+
+```bash
+sudo samba-tool user create <name> <password> --userou="OU=<name>"
+```
+
+Example:
+
+```bash
+sudo samba-tool user create Dave admin_21 --userou="OU=IT_Department"
+```
+
+## Step 17 — Verify the User Structure
+
+We check the full user structure to confirm all users and OUs are correctly placed:
+
+```bash
+sudo samba-tool user list --full-dn
+```
+
